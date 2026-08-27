@@ -1,173 +1,69 @@
-﻿# ساخت خروجی اندروید (APK) با Capacitor — نصب هوشمند/بروزرسانی روی نسخهٔ قبلی
-#
-# اجرا (اتصال به سرور ویندوزی در شبکه):
-#   powershell -ExecutionPolicy Bypass -File .\scripts\build-android.ps1 -AppUrl "http://192.168.1.10:8080"
-# اجرا (بدون سرور، فقط رابط کاربری آفلاین):
-#   powershell -ExecutionPolicy Bypass -File .\scripts\build-android.ps1
-# نسخهٔ انتشار امضاشده + نصب مستقیم روی گوشی وصل‌شده:
-#   ... -Release -Install
-#
-# پارامترها:
-#   -Version 1.2.0   نسخهٔ نمایش‌داده‌شده (پیش‌فرض: package.json)
-#   -Release         خروجی release
-#   -Sign            امضای APK با keystore (اگر نبود، ساخته می‌شود)
-#   -Install         نصب روی گوشی متصل؛ اگر نسخهٔ قبلی امضای متفاوت داشت، حذف و نصب تازه
-#   -Clean           پاک‌سازی کش gradle و خروجی‌های قبلی
-
+﻿# ساخت خودکار APK Android با Capacitor
 param(
-  [string]$AppUrl = "",
-  [string]$Version = "",
-  [switch]$Release,
-  [switch]$Sign,
-  [switch]$Install,
-  [switch]$Clean
+ [string]$AppUrl='', [string]$Version='', [switch]$Release, [switch]$Sign,
+ [switch]$Install, [switch]$Clean, [switch]$InternalWorkspace, [string]$OriginalRoot=''
 )
+$ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'build-common.ps1')
+$forward=@(); foreach($item in @(@('AppUrl',$AppUrl),@('Version',$Version))){if($item[1]){$forward+=@("-$($item[0])",$item[1])}}; foreach($s in @('Release','Sign','Install','Clean')){if(Get-Variable $s -ValueOnly){$forward+="-$s"}}
+Enter-AsciiBuildWorkspace -ScriptName 'build-android.ps1' -ForwardArguments $forward -InternalWorkspace:$InternalWorkspace -OriginalRoot $OriginalRoot | Out-Null
+Set-Location (Split-Path $PSScriptRoot -Parent); $Root=(Get-Location).Path; if(-not $OriginalRoot){$OriginalRoot=$Root}
 
-$ErrorActionPreference = "Stop"
-Set-Location (Split-Path $PSScriptRoot -Parent)
-$Root = Get-Location
-
-Write-Host "== 1/7 نصب Capacitor ==" -ForegroundColor Yellow
-npm install @capacitor/core @capacitor/cli @capacitor/android @capacitor/splash-screen
-if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
-
-# ---------------------------------------------------------------------------
-# نسخه‌گذاری هوشمند: versionName از package.json و versionCode عددی صعودی
-# (بدون versionCode بالاتر، اندروید نصب بروزرسانی را رد می‌کند)
-# ---------------------------------------------------------------------------
-Write-Host "== 2/7 تعیین نسخه ==" -ForegroundColor Yellow
-$pkgPath = Join-Path $Root "package.json"
-if ($Version -ne "") {
-  if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "قالب نسخه باید x.y.z باشد" }
-  $raw = Get-Content $pkgPath -Raw
-  $raw = $raw -replace '("version"\s*:\s*")[^"]+(")', "`${1}$Version`${2}"
-  [IO.File]::WriteAllText($pkgPath, $raw, (New-Object Text.UTF8Encoding($false)))
+function Ensure-Jdk {
+ $java=Get-Command java -ErrorAction SilentlyContinue
+ if(-not $java){
+  $winget=Get-Command winget -ErrorAction SilentlyContinue
+  if($winget){& $winget.Source install --id EclipseAdoptium.Temurin.21.JDK -e --silent --disable-interactivity --accept-source-agreements --accept-package-agreements | Out-Null; Update-ProcessPath}
+ }
+ if(-not(Get-Command java -ErrorAction SilentlyContinue)){throw 'نصب خودکار JDK 21 ممکن نشد. اتصال اینترنت/winget را بررسی کنید.'}
+ $javaPath=(Get-Command java).Source; $env:JAVA_HOME=(Split-Path (Split-Path $javaPath -Parent) -Parent); $env:Path="$env:JAVA_HOME\bin;$env:Path"
 }
-$pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
-$VersionName = $pkg.version
-$p = $VersionName.Split('.')
-$VersionCode = [int]$p[0] * 10000 + [int]$p[1] * 100 + [int]$p[2]
-Write-Host "versionName=$VersionName versionCode=$VersionCode" -ForegroundColor Green
-
-Write-Host "== 3/7 بیلد وب ==" -ForegroundColor Yellow
-$env:NITRO_PRESET = "node-server"
-npm run build
-if ($LASTEXITCODE -ne 0) { throw "build failed" }
-if (-not (Test-Path ".output/public/index.html")) {
-  if ($AppUrl -eq "") {
-    throw "این پروژه SSR است و index.html ایستا ندارد. برای جلوگیری از صفحه سفید/سیاه، build-android.ps1 را با -AppUrl و آدرس سرور ویندوز اجرا کنید."
-  }
-  Write-Host "خروجی SSR شناسایی شد؛ برنامه Android از سرور $AppUrl استفاده می‌کند." -ForegroundColor Cyan
+function Ensure-AndroidSdk {
+ $sdk=if($env:ANDROID_SDK_ROOT){$env:ANDROID_SDK_ROOT}elseif($env:ANDROID_HOME){$env:ANDROID_HOME}else{Join-Path $env:LOCALAPPDATA 'Android\Sdk'}
+ $manager=Join-Path $sdk 'cmdline-tools\latest\bin\sdkmanager.bat'
+ if(-not(Test-Path $manager)){
+  $zip=Join-Path $env:TEMP 'android-commandlinetools.zip'; $tmp=Join-Path $env:TEMP 'android-commandlinetools'
+  Invoke-Download -Uri @('https://dl.google.com/android/repository/commandlinetools-win-13114758_latest.zip') -OutFile $zip -TimeoutSec 600
+  Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue; Expand-Archive $zip $tmp -Force
+  New-Item -ItemType Directory -Force (Split-Path $manager -Parent) | Out-Null
+  Copy-Item (Join-Path $tmp 'cmdline-tools\*') (Split-Path $manager -Parent) -Recurse -Force
+ }
+ $env:ANDROID_SDK_ROOT=$sdk; $env:ANDROID_HOME=$sdk; $env:Path="$sdk\platform-tools;$sdk\cmdline-tools\latest\bin;$env:Path"
+ return @($sdk,$manager)
 }
-
-Write-Host "== 4/7 تنظیم capacitor.config.json ==" -ForegroundColor Yellow
-$cfg = Get-Content capacitor.config.json -Raw | ConvertFrom-Json
-if ($AppUrl -ne "") {
-  $cfg | Add-Member -NotePropertyName server -NotePropertyValue ([pscustomobject]@{ url = $AppUrl; cleartext = $true }) -Force
-} else {
-  if ($cfg.PSObject.Properties.Name -contains "server") { $cfg.PSObject.Properties.Remove("server") }
-}
-[IO.File]::WriteAllText(
-  (Join-Path $Root "capacitor.config.json"),
-  ($cfg | ConvertTo-Json -Depth 10),
-  (New-Object Text.UTF8Encoding($false))
-)
-
-Write-Host "== 5/7 پلتفرم، آیکن/اسپلش، همگام‌سازی ==" -ForegroundColor Yellow
-if ($Clean -and (Test-Path "android\app\build")) { Remove-Item "android\app\build" -Recurse -Force }
-if (-not (Test-Path "android")) { npx cap add android }
-npx @capacitor/assets generate --android --iconBackgroundColor "#0a1024" --splashBackgroundColor "#0a1024"
-if ($LASTEXITCODE -ne 0) { throw "Capacitor asset generation failed" }
-npx cap sync android
-if ($LASTEXITCODE -ne 0) { throw "cap sync failed" }
-
-Write-Host "== نصب پلاگین بومی SSDP/AVTransport ==" -ForegroundColor Yellow
-node scripts/install-android-plugin.mjs
-if ($LASTEXITCODE -ne 0) { throw "native plugin install failed" }
-
-# نوشتن نسخه در build.gradle تا بروزرسانی روی نسخهٔ قبلی پذیرفته شود
-$gradle = "android\app\build.gradle"
-if (Test-Path $gradle) {
-  $g = Get-Content $gradle -Raw
-  $g = $g -replace 'versionCode\s+\d+', "versionCode $VersionCode"
-  $g = $g -replace 'versionName\s+"[^"]*"', "versionName `"$VersionName`""
-  [IO.File]::WriteAllText((Join-Path $Root $gradle), $g, (New-Object Text.UTF8Encoding($false)))
-  Write-Host "build.gradle بروزرسانی شد." -ForegroundColor Green
-}
-
-Write-Host "== 6/7 ساخت APK ==" -ForegroundColor Yellow
-Push-Location android
 try {
-  if ($Clean) { .\gradlew.bat clean }
-  if ($Release) {
-    .\gradlew.bat assembleRelease
-    if ($LASTEXITCODE -ne 0) { throw "gradle build failed" }
-    $Apk = Join-Path $Root "android\app\build\outputs\apk\release\app-release-unsigned.apk"
-    if (-not (Test-Path $Apk)) {
-      $Apk = Join-Path $Root "android\app\build\outputs\apk\release\app-release.apk"
-    }
-  } else {
-    .\gradlew.bat assembleDebug
-    if ($LASTEXITCODE -ne 0) { throw "gradle build failed" }
-    $Apk = Join-Path $Root "android\app\build\outputs\apk\debug\app-debug.apk"
-  }
-} finally {
-  Pop-Location
-}
-if (-not (Test-Path $Apk)) { throw "APK پیدا نشد: $Apk" }
+ Write-Step '1/7 پیش‌نیازها و پکیج‌ها'; Ensure-Jdk; $sdkInfo=Ensure-AndroidSdk; $sdk=$sdkInfo[0]; $manager=$sdkInfo[1]; Install-NodeDependencies
+ Invoke-Checked npm.cmd @('install','--no-save','--include=optional','--no-audit','--no-fund','--no-progress','--yes','@capacitor/core','@capacitor/cli','@capacitor/android','@capacitor/splash-screen','@capacitor/assets') 'Capacitor install failed'
 
-# ---------------------------------------------------------------------------
-# امضا: اگر با هر بیلد کلید عوض شود، اندروید بروزرسانی را رد می‌کند. پس یک
-# keystore پایدار در ریشهٔ پروژه ساخته و همیشه همان استفاده می‌شود.
-# ---------------------------------------------------------------------------
-$SignedApk = Join-Path $Root ("installer\UniversalMediaServer-" + $VersionName + ".apk")
-New-Item -ItemType Directory -Force -Path (Join-Path $Root "installer") | Out-Null
-if ($Release -and $Sign) {
-  Write-Host "== امضای APK ==" -ForegroundColor Yellow
-  $Ks = Join-Path $Root "release.keystore"
-  $KsPass = "umsrelease"
-  if (-not (Test-Path $Ks)) {
-    Write-Host "ساخت keystore پایدار (release.keystore) — آن را نگه دارید!" -ForegroundColor Cyan
-    & keytool -genkeypair -v -keystore $Ks -alias ums -keyalg RSA -keysize 2048 -validity 10000 `
-      -storepass $KsPass -keypass $KsPass -dname "CN=UniversalMediaServer, O=UMS, C=IR"
-    if ($LASTEXITCODE -ne 0) { throw "keytool failed (JDK نصب است؟)" }
-  }
-  $apksigner = Get-Command apksigner -ErrorAction SilentlyContinue
-  if (-not $apksigner -and $env:ANDROID_HOME) {
-    $apksigner = Get-ChildItem "$env:ANDROID_HOME\build-tools" -Filter "apksigner.bat" -Recurse -ErrorAction SilentlyContinue |
-      Sort-Object FullName -Descending | Select-Object -First 1
-  }
-  if (-not $apksigner) { throw "apksigner پیدا نشد (Android build-tools لازم است)" }
-  $signerPath = if ($apksigner.Source) { $apksigner.Source } else { $apksigner.FullName }
-  & $signerPath sign --ks $Ks --ks-pass "pass:$KsPass" --key-pass "pass:$KsPass" --out $SignedApk $Apk
-  if ($LASTEXITCODE -ne 0) { throw "apksigner failed" }
-  $Apk = $SignedApk
-} else {
-  Copy-Item $Apk $SignedApk -Force
-  $Apk = $SignedApk
-}
-Write-Host "خروجی: $Apk" -ForegroundColor Green
+ Write-Step '2/7 تعیین نسخه و Android SDK'
+ $pkgPath=Join-Path $Root 'package.json'; if($Version){if($Version -notmatch '^\d+\.\d+\.\d+$'){throw 'قالب نسخه باید x.y.z باشد'}; $raw=(Get-Content $pkgPath -Raw)-replace '("version"\s*:\s*")[^"]+("\s*,)',"`${1}$Version`${2}"; [IO.File]::WriteAllText($pkgPath,$raw,(New-Object Text.UTF8Encoding($false)))}
+ $VersionName=(Get-Content $pkgPath -Raw|ConvertFrom-Json).version; $v=$VersionName.Split('.'); $VersionCode=[int]$v[0]*10000+[int]$v[1]*100+[int]$v[2]
+ $gradleFiles=Get-ChildItem -Path @('android','node_modules\@capacitor\android') -Filter '*.gradle' -Recurse -ErrorAction SilentlyContinue
+ $text=($gradleFiles|ForEach-Object{Get-Content $_.FullName -Raw})-join "`n"
+ $compile=if($text -match 'compileSdk(?:Version)?\s*[=:]?\s*(\d+)'){$Matches[1]}else{'35'}; $buildTools=if($text -match 'buildToolsVersion\s*[=:]?\s*["'']([^"'']+)'){$Matches[1]}else{'35.0.0'}
+ $yesFile=Join-Path $env:TEMP 'android-licenses.txt'; (1..200|ForEach-Object{'y'})|Set-Content $yesFile -Encoding ascii
+ cmd.exe /c "`"$manager`" --sdk_root=`"$sdk`" --licenses < `"$yesFile`" >nul"; if($LASTEXITCODE -ne 0){throw 'پذیرش licenseهای Android ناموفق بود.'}
+ Invoke-Checked $manager @("--sdk_root=$sdk",'platform-tools',"platforms;android-$compile","build-tools;$buildTools") 'Android SDK package installation failed'
 
-# ---------------------------------------------------------------------------
-# 7/7 نصب هوشمند روی گوشی: ابتدا بروزرسانی روی نسخهٔ قبل (-r). اگر امضا یا
-# نسخه ناسازگار بود، نسخهٔ قدیمی حذف و نصب تازه انجام می‌شود (داده پاک می‌شود).
-# ---------------------------------------------------------------------------
-if ($Install) {
-  Write-Host "== 7/7 نصب روی گوشی ==" -ForegroundColor Yellow
-  $adb = (Get-Command adb -ErrorAction SilentlyContinue)
-  if (-not $adb) { throw "adb پیدا نشد؛ Android Platform-Tools را نصب کنید." }
-  $AppId = $cfg.appId
-  $out = (& adb install -r -d "$Apk" 2>&1) -join "`n"
-  Write-Host $out
-  if ($out -match "INSTALL_FAILED_UPDATE_INCOMPATIBLE|INSTALL_FAILED_VERSION_DOWNGRADE|signatures do not match") {
-    Write-Host "نسخهٔ قدیمی ناسازگار بود؛ حذف و نصب تازه…" -ForegroundColor Yellow
-    & adb uninstall $AppId | Out-Null
-    & adb install "$Apk"
-    if ($LASTEXITCODE -ne 0) { throw "adb install failed" }
-  }
-  Write-Host "نصب کامل شد ($AppId نسخه $VersionName)." -ForegroundColor Green
-}
+ Write-Step '3/7 بیلد وب'; $env:NITRO_PRESET='node-server'; Invoke-Checked npm.cmd @('run','build','--','--configLoader','runner') 'Web build failed'
+ if((-not(Test-Path '.output/public/index.html')) -and (-not $AppUrl)){throw 'پروژه SSR است؛ برای APK قابل استفاده پارامتر -AppUrl را با نشانی سرور Windows وارد کنید.'}
 
-if ($Release -and -not $Sign) {
-  Write-Host "برای نصب/بروزرسانی روی گوشی، APK باید امضا شود: پارامتر -Sign را اضافه کنید." -ForegroundColor Yellow
-}
+ Write-Step '4/7 تنظیم Capacitor'; $cfg=Get-Content capacitor.config.json -Raw|ConvertFrom-Json
+ if($AppUrl){$cfg|Add-Member server ([pscustomobject]@{url=$AppUrl;cleartext=$true}) -Force}elseif($cfg.PSObject.Properties.Name -contains 'server'){$cfg.PSObject.Properties.Remove('server')}
+ [IO.File]::WriteAllText((Join-Path $Root 'capacitor.config.json'),($cfg|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
+
+ Write-Step '5/7 همگام‌سازی Android'; if($Clean -and (Test-Path 'android\app\build')){Remove-Item 'android\app\build' -Recurse -Force}; if(-not(Test-Path android)){Invoke-Checked npx.cmd @('--yes','cap','add','android') 'Capacitor Android add failed'}
+ Invoke-Checked npx.cmd @('--yes','@capacitor/assets','generate','--android','--iconBackgroundColor','#0a1024','--splashBackgroundColor','#0a1024') 'Asset generation failed'; Invoke-Checked npx.cmd @('--yes','cap','sync','android') 'Capacitor sync failed'; Invoke-Checked node @('scripts\install-android-plugin.mjs') 'Native plugin install failed'
+ $gradle='android\app\build.gradle'; $g=Get-Content $gradle -Raw; $g=$g-replace 'versionCode\s+\d+',"versionCode $VersionCode"; $g=$g-replace 'versionName\s+"[^"]*"',"versionName `"$VersionName`""; [IO.File]::WriteAllText((Join-Path $Root $gradle),$g,(New-Object Text.UTF8Encoding($false)))
+
+ Write-Step '6/7 ساخت APK'; Push-Location android; try {if($Clean){Invoke-Checked '.\gradlew.bat' @('clean','--no-daemon','--console=plain') 'Gradle clean failed'}; $task=if($Release){'assembleRelease'}else{'assembleDebug'}; Invoke-Checked '.\gradlew.bat' @($task,'--no-daemon','--console=plain','--stacktrace') 'Gradle build failed'}finally{Pop-Location}
+ $apk=if($Release){Join-Path $Root 'android\app\build\outputs\apk\release\app-release-unsigned.apk'}else{Join-Path $Root 'android\app\build\outputs\apk\debug\app-debug.apk'}; if($Release -and -not(Test-Path $apk)){$apk=Join-Path $Root 'android\app\build\outputs\apk\release\app-release.apk'}; if(-not(Test-Path $apk)){throw "APK پیدا نشد: $apk"}
+
+ if($Release -and $Sign){
+  $ks=Join-Path $OriginalRoot 'release.keystore'; $pass=if($env:UMS_KEYSTORE_PASSWORD){$env:UMS_KEYSTORE_PASSWORD}else{'umsrelease'}
+  if(-not(Test-Path $ks)){Invoke-Checked keytool @('-genkeypair','-noprompt','-keystore',$ks,'-alias','ums','-keyalg','RSA','-keysize','2048','-validity','10000','-storepass',$pass,'-keypass',$pass,'-dname','CN=UniversalMediaServer, O=UMS, C=IR') 'keytool failed'}
+  $signer=Get-ChildItem "$sdk\build-tools" -Filter apksigner.bat -Recurse|Sort-Object FullName -Descending|Select-Object -First 1; if(-not $signer){throw 'apksigner پیدا نشد.'}; $signed=Join-Path $Root 'app-release-signed.apk'; Invoke-Checked $signer.FullName @('sign','--ks',$ks,'--ks-pass',"pass:$pass",'--key-pass',"pass:$pass",'--out',$signed,$apk) 'APK signing failed'; Invoke-Checked $signer.FullName @('verify','--verbose',$signed) 'APK signature verification failed'; $apk=$signed
+ }
+ $name="UniversalMediaServer-$VersionName" + $(if($Release){'-release.apk'}else{'-debug.apk'}); $final=Copy-BuildArtifact $apk $OriginalRoot $name
+ Write-Step '7/7 پایان'; if($Install){$adb=Join-Path $sdk 'platform-tools\adb.exe'; Invoke-Checked $adb @('install','-r','-d',$final) 'ADB install failed'}; Write-Ok "APK: $final"
+} catch {Write-Error "ساخت Android متوقف شد: $($_.Exception.Message)"; exit 1}
