@@ -14,9 +14,10 @@
 powershell -ExecutionPolicy Bypass -File ".\scripts\build-windows.ps1"
 ```
 
-اسکریپت پروژه را به workspace موقت کوتاه و ASCII در `C:\ums-build` کپی می‌کند؛
-بنابراین خطای `UNLOADABLE_DEPENDENCY` یا `No such file` مربوط به مسیرهایی مانند
-`New folder16` به Rolldown/Vite نمی‌رسد. Node.js LTS، npm، bindingهای native
+ساخت همیشه در همان مسیر پروژه انجام می‌شود و هیچ کپی یا انتقالی به پوشهٔ دیگر
+صورت نمی‌گیرد؛ برای ابزارهای native فقط نام کوتاه 8.3 همان پوشه استفاده می‌شود تا
+مسیرهایی مانند `New folder16` باعث خطای `UNLOADABLE_DEPENDENCY` یا `No such file`
+در Rolldown/Vite نشوند. Node.js LTS، npm، bindingهای native
 Lightning CSS/Tailwind، FFmpeg/FFprobe، yt-dlp، Electron و Inno Setup نیز بدون
 prompt نصب یا ترمیم می‌شوند. `package-lock.json` هیچ‌گاه حذف نمی‌شود.
 

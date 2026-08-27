@@ -125,36 +125,39 @@ function Install-NodeDependencies {
   if (-not (Test-NativeBindings)) { throw "bindingهای lightningcss/Tailwind Oxide بارگذاری نشدند. آنتی‌ویروس و معماری Node.js را بررسی کنید." }
 }
 
+function Get-ShortPath {
+  param([Parameter(Mandatory=$true)][string]$Path)
+  try {
+    $fs = New-Object -ComObject Scripting.FileSystemObject
+    $short = $fs.GetFolder($Path).ShortPath
+    if ($short) { return $short }
+  } catch { }
+  return $Path
+}
+
 function Enter-AsciiBuildWorkspace {
+  # ساخت همیشه در همان مسیر پروژه انجام می‌شود؛ هیچ کپی یا جابه‌جایی صورت نمی‌گیرد.
+  # برای جلوگیری از خطای ابزارهای native با فاصله/حروف غیرلاتین، از نام کوتاه 8.3 همان پوشه استفاده می‌شود.
   param([string]$ScriptName, [string[]]$ForwardArguments, [switch]$InternalWorkspace, [string]$OriginalRoot)
-  if ($InternalWorkspace) { return $false }
   if ($env:OS -ne 'Windows_NT') { throw "این اسکریپت باید در Windows اجرا شود." }
   $source = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-  $hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($source))
-  $hash = ([BitConverter]::ToString($hashBytes)).Replace('-','').Substring(0,10).ToLowerInvariant()
-  $base = if ($env:UMS_BUILD_ROOT) { $env:UMS_BUILD_ROOT } else { 'C:\ums-build' }
-  $workspace = Join-Path $base "screen-share-$hash"
-  New-Item -ItemType Directory -Force -Path $base | Out-Null
-  if (Test-Path $workspace) { Remove-Item $workspace -Recurse -Force }
-  New-Item -ItemType Directory -Force -Path $workspace | Out-Null
-  Write-Host "کپی پروژه به مسیر امن ساخت: $workspace"
-  $excludeDirs = @('node_modules','.git','.output','dist','electron-release','installer','.workspace','.lovable','build')
-  $roboArgs = @($source,$workspace,'/E','/COPY:DAT','/R:2','/W:2','/NFL','/NDL','/NJH','/NJS','/NP','/XD') + $excludeDirs
-  & robocopy.exe @roboArgs | Out-Null
-  if ($LASTEXITCODE -ge 8) { throw "کپی workspace ناموفق بود (robocopy exit $LASTEXITCODE)." }
-  $childArgs = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Join-Path $workspace "scripts\$ScriptName"),'-InternalWorkspace','-OriginalRoot',$source) + $ForwardArguments
-  try {
-    & powershell.exe @childArgs
-    $code = $LASTEXITCODE
-  } finally {
-    Set-Location $source
-    Remove-Item $workspace -Recurse -Force -ErrorAction SilentlyContinue
+  $safe = Get-ShortPath $source
+  if ($safe -ne $source) {
+    Write-Host "ساخت در همان مسیر پروژه با نام کوتاه سازگار: $safe"
+  } else {
+    Write-Host "ساخت در مسیر پروژه: $source"
   }
-  exit $code
+  Set-Location $safe
+  $temp = Join-Path $safe '.buildtmp'
+  New-Item -ItemType Directory -Force -Path $temp | Out-Null
+  $env:TMP = Get-ShortPath $temp
+  $env:TEMP = $env:TMP
+  return $false
 }
 
 function Copy-BuildArtifact {
   param([string]$Source, [string]$OriginalRoot, [string]$Name)
+  if (-not $OriginalRoot) { $OriginalRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
   if (-not (Test-Path $Source)) { throw "خروجی ساخته نشد: $Source" }
   $destinationRoot = Join-Path $OriginalRoot 'installer'
   New-Item -ItemType Directory -Force -Path $destinationRoot | Out-Null

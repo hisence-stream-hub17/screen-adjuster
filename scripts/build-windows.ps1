@@ -19,7 +19,7 @@ try {
   $pkgPath=Join-Path $Root 'package.json'
   if($Version){
     if($Version -notmatch '^\d+\.\d+\.\d+$'){throw 'قالب نسخه باید x.y.z باشد'}
-    $raw=$raw -replace '("version"\s*:\s*")[^"]+("\s*,)',"`${1}$Version`${2}"
+    $raw=(Get-Content $pkgPath -Raw) -replace '("version"\s*:\s*")[^"]+("\s*,)',"`${1}$Version`${2}"
     [IO.File]::WriteAllText($pkgPath,$raw,(New-Object Text.UTF8Encoding($false)))
   }
   $AppVersion=(Get-Content $pkgPath -Raw | ConvertFrom-Json).version
