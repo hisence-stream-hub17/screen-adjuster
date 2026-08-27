@@ -19,8 +19,6 @@ try {
   $pkgPath=Join-Path $Root 'package.json'
   if($Version){
     if($Version -notmatch '^\d+\.\d+\.\d+$'){throw 'قالب نسخه باید x.y.z باشد'}
-    $raw=(Get-Content $pkgPath -Raw) -replace '("version"\s*:\s*")[^"]+("             )',"`${1}$Version`${2}"
-    # جایگزینی دوم برای JSON معمولی؛ فایل JSON باید بدون BOM بماند.
     $raw=$raw -replace '("version"\s*:\s*")[^"]+("\s*,)',"`${1}$Version`${2}"
     [IO.File]::WriteAllText($pkgPath,$raw,(New-Object Text.UTF8Encoding($false)))
   }
@@ -31,7 +29,7 @@ try {
 
   Write-Step '2/7 بیلد وب'
   $env:NITRO_PRESET='node-server'
-  Invoke-Checked npm.cmd @('run','build','--','--configLoader','runner') 'Web build failed'
+  Invoke-Checked npm.cmd @('run','build') 'Web build failed'
   if((-not(Test-Path '.output/server/index.mjs')) -and (-not(Test-Path 'dist/server/index.mjs'))){throw 'Server bundle ساخته نشد.'}
 
   Write-Step '3/7 آماده‌سازی FFmpeg و yt-dlp'

@@ -6,7 +6,32 @@
 
 ---
 
-## 1) پیش‌نیازها (یک‌بار)
+## 1) ساخت تک‌دستوری (پیشنهادی)
+
+از هر مسیری، حتی مسیری دارای فاصله یا حروف فارسی، این فرمان را اجرا کنید:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\scripts\build-windows.ps1"
+```
+
+اسکریپت پروژه را به workspace موقت کوتاه و ASCII در `C:\ums-build` کپی می‌کند؛
+بنابراین خطای `UNLOADABLE_DEPENDENCY` یا `No such file` مربوط به مسیرهایی مانند
+`New folder16` به Rolldown/Vite نمی‌رسد. Node.js LTS، npm، bindingهای native
+Lightning CSS/Tailwind، FFmpeg/FFprobe، yt-dlp، Electron و Inno Setup نیز بدون
+prompt نصب یا ترمیم می‌شوند. `package-lock.json` هیچ‌گاه حذف نمی‌شود.
+
+خروجی نهایی به مسیر اصلی برمی‌گردد:
+
+```text
+installer\UniversalMediaServer-Setup.exe
+installer\UniversalMediaServer-Setup-1.0.0.exe
+```
+
+> متن `PS C:\...>` فقط اعلان PowerShell است و نباید دوباره تایپ یا paste شود.
+> پس از `cd "D:\مسیر پروژه"` کلید Enter بزنید، یا دو فرمان را با `;` جدا کنید.
+> چسباندن `npm` بلافاصله بعد از کوتیشن مسیر خطاست.
+
+## 2) پیش‌نیازها (در صورت شکست نصب خودکار)
 
 | مورد | نسخه | بررسی | لینک |
 | --- | --- | --- | --- |
@@ -32,30 +57,28 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ---
 
-## 2) گرفتن سورس و نصب پکیج‌ها
+## 3) گرفتن سورس
 
 ```powershell
 cd $HOME\Desktop
 git clone https://github.com/hisence-stream-hub3/media-stream-hub.git
-cd media-stream-hub
-npm install
+cd screen-share-speed-adjuster
 ```
 
-نکته: مسیر پروژه **نباید** فاصله یا حروف فارسی داشته باشد (مثل `C:\ums`) — بعضی
-فرمان بیلد پروژه از `--configLoader runner` استفاده می‌کند؛ بنابراین Vite تنظیمات
-را با Rolldown bundle نمی‌کند و مسیرهای دارای فاصله یا پرانتز باعث خطای
-`UNRESOLVED_ENTRY` برای `vite.config.ts` نمی‌شوند.
+مسیر اصلی می‌تواند فاصله یا حروف فارسی داشته باشد؛ bootstrap مشترک ساخت را در
+مسیر امن انجام می‌دهد و artifact نهایی را بازمی‌گرداند.
 
 ---
 
-## 3) مسیر ساده: یک اسکریپت، همه‌چیز
+## 4) گزینه‌های اسکریپت
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 ```
 
-این اسکریپت چهار مرحله را انجام می‌دهد: `npm install` → بیلد وب با
-`NITRO_PRESET=node-server` → بسته‌بندی Electron → چاپ مسیر خروجی.
+گزینه `-Version 1.2.0` نسخه، `-RefreshDeps` دانلود ابزارها و `-SkipInstaller`
+فقط بسته Electron را کنترل می‌کنند. تمام فرمان‌های npm/winget/installer بدون
+ورودی تعاملی اجرا می‌شوند و شکست هر وابستگی ضروری exit code ناموفق می‌دهد.
 
 خروجی مورد انتظار:
 
@@ -71,7 +94,7 @@ electron-release\UniversalMediaServer-win32-x64\UniversalMediaServer.exe
 
 ---
 
-## 4) مسیر دستی (اگر خواستید مرحله‌به‌مرحله ببینید)
+## 5) مسیر دستی (اگر خواستید مرحله‌به‌مرحله ببینید)
 
 ```powershell
 # 4.1 بیلد وب — پریست node-server الزامی است
@@ -88,7 +111,7 @@ node .\scripts\package-electron.mjs --platform win32 --arch x64
 
 ---
 
-## 5) ساخت فایل نصبی با Inno Setup
+## 6) ساخت فایل نصبی با Inno Setup
 
 ```powershell
 iscc scripts\installer.iss

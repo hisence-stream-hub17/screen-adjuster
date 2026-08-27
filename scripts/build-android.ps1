@@ -45,7 +45,7 @@ try {
  cmd.exe /c "`"$manager`" --sdk_root=`"$sdk`" --licenses < `"$yesFile`" >nul"; if($LASTEXITCODE -ne 0){throw 'پذیرش licenseهای Android ناموفق بود.'}
  Invoke-Checked $manager @("--sdk_root=$sdk",'platform-tools',"platforms;android-$compile","build-tools;$buildTools") 'Android SDK package installation failed'
 
- Write-Step '3/7 بیلد وب'; $env:NITRO_PRESET='node-server'; Invoke-Checked npm.cmd @('run','build','--','--configLoader','runner') 'Web build failed'
+ Write-Step '3/7 بیلد وب'; $env:NITRO_PRESET='node-server'; Invoke-Checked npm.cmd @('run','build') 'Web build failed'
  if((-not(Test-Path '.output/public/index.html')) -and (-not $AppUrl)){throw 'پروژه SSR است؛ برای APK قابل استفاده پارامتر -AppUrl را با نشانی سرور Windows وارد کنید.'}
 
  Write-Step '4/7 تنظیم Capacitor'; $cfg=Get-Content capacitor.config.json -Raw|ConvertFrom-Json
