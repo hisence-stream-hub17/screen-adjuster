@@ -104,6 +104,18 @@ function Install-NodeDependencies {
   $oxideVersion = (& node -p "require('./node_modules/@tailwindcss/oxide/package.json').version" 2>$null)
   if ($lcVersion -and $oxideVersion) {
     Invoke-Checked npm.cmd @('install','--no-save','--include=optional','--no-audit','--no-fund','--no-progress','--yes',"lightningcss-win32-$arch-msvc@$lcVersion","@tailwindcss/oxide-win32-$arch-msvc@$oxideVersion") 'Native dependency repair failed'
+    # Tailwind may carry a different nested lightningcss version. Install its
+    # matching binding in that package scope so Node never resolves a mismatched
+    # root binding (the exact failure seen with lightningcss 1.32 vs 1.33).
+    $nestedRoot = Join-Path (Get-Location) 'node_modules\@tailwindcss\node'
+    $nestedPackage = Join-Path $nestedRoot 'node_modules\lightningcss\package.json'
+    if (Test-Path $nestedPackage) {
+      $nestedVersion = (Get-Content $nestedPackage -Raw | ConvertFrom-Json).version
+      Push-Location $nestedRoot
+      try {
+        Invoke-Checked npm.cmd @('install','--no-save','--include=optional','--no-audit','--no-fund','--no-progress','--yes',"lightningcss-win32-$arch-msvc@$nestedVersion") 'Nested lightningcss repair failed'
+      } finally { Pop-Location }
+    }
   }
   if (Test-NativeBindings) { return }
 
