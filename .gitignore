@@ -36,3 +36,4 @@ release.keystore
 *.njsproj
 *.sln
 *.sw?
+.buildtmp/
