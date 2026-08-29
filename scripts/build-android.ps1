@@ -11,7 +11,7 @@ function Get-JavaMajor([string]$JavaExe) {
     $out = (& $JavaExe -version 2>&1 | Out-String)
     if ($out -match 'version "(\d+)(?:\.(\d+))?') {
       $first = [int]$Matches[1]
-      if ($first -eq 1 -and $Matches[2]) { return [int]$Matches[2] }
+      if ($first -eq 1 -and $Matches.ContainsKey(2)) { return [int]$Matches[2] }
       return $first
     }
   } catch { return 0 }
